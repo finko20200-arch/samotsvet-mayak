@@ -4,16 +4,15 @@
  */
 
 import { CONFIG } from '../../config/gameConfig.js';
-import { playSound } from '../audio/sound.js';
+import { audioManager } from '../audio/sound.js';
 
-// Типы препятствий
+// Типы препятствий (строковые для удобства)
 export const OBSTACLE_TYPES = {
-    NONE: 0,
-    ICE: 1,        // Разбивается матчем рядом (1-2 удара)
-    BOX: 2,        // Разбивается матчем внутри или рядом (2-3 удара)
-    GRASS: 3,      // Требует матча НА этой клетке (1 удар)
-    CHAIN: 4,      // Замок, требует ключа или спец-камня
-    ROCK: 5        // Неразрушимый блок (только для ограничения пространства)
+    ICE: 'ice',        // Разбивается матчем рядом (1-2 удара)
+    BOX: 'box',        // Разбивается матчем внутри или рядом (2-3 удара)
+    GRASS: 'grass',    // Требует матча НА этой клетке (1 удар)
+    CHAIN: 'chain',    // Замок, требует ключа или спец-камня
+    ROCK: 'rock'       // Неразрушимый блок (только для ограничения пространства)
 };
 
 // Конфигурация препятствий
@@ -93,11 +92,11 @@ export class Obstacle {
         }, 200);
 
         if (this.hp <= 0) {
-            playSound('break');
+            audioManager.playSFX('break');
             return true; // Разрушено
         }
         
-        playSound('hit');
+        audioManager.playSFX('hit');
         return false;
     }
 
@@ -116,229 +115,203 @@ export class Obstacle {
     requiresMatchOnTop() {
         return this.type === OBSTACLE_TYPES.GRASS;
     }
+}
+
+/**
+ * Менеджер препятствий уровня
+ */
+export class ObstacleManager {
+    constructor() {
+        this.obstacles = new Map(); // "r,c" -> Obstacle
+    }
 
     /**
-     * Отрисовка препятствия
-     * @param {CanvasRenderingContext2D} ctx 
-     * @param {number} x 
-     * @param {number} y 
-     * @param {number} size 
+     * Загрузка препятствий для уровня
+     * @param {Array} layout - массив конфигурации препятствий
+     * @param {number} rows - количество рядов
+     * @param {number} cols - количество колонок
      */
-    draw(ctx, x, y, size) {
-        const config = OBSTACLE_CONFIG[this.type];
-        const center = size / 2;
+    loadLevel(layout, rows, cols) {
+        this.obstacles.clear();
         
-        ctx.save();
+        if (!layout) return;
         
-        // Применяем тряску если есть
-        const shakeX = this.isAnimating ? this.shakeOffset.x : 0;
-        const shakeY = this.isAnimating ? this.shakeOffset.y : 0;
+        layout.forEach(item => {
+            const { r, c, type, hp } = item;
+            const key = `${r},${c}`;
+            this.obstacles.set(key, new Obstacle(type, r, c, hp));
+        });
+    }
+
+    /**
+     * Очистка всех препятствий
+     */
+    clear() {
+        this.obstacles.clear();
+    }
+
+    /**
+     * Получение препятствия в клетке
+     * @param {number} r - ряд
+     * @param {number} c - колонка
+     * @returns {Obstacle|undefined}
+     */
+    get(r, c) {
+        return this.obstacles.get(`${r},${c}`);
+    }
+
+    /**
+     * Удаление препятствия
+     * @param {number} r - ряд
+     * @param {number} c - колонка
+     */
+    remove(r, c) {
+        this.obstacles.delete(`${r},${c}`);
+    }
+
+    /**
+     * Нанесение урона препятствию
+     * @param {number} r - ряд
+     * @param {number} c - колонка
+     * @param {number} damage - урон
+     * @returns {boolean} - разрушено ли
+     */
+    hit(r, c, damage = 1) {
+        const obstacle = this.obstacles.get(`${r},${c}`);
+        if (!obstacle) return false;
+        return obstacle.hit(damage);
+    }
+
+    /**
+     * Проверка наличия препятствия в клетке
+     * @param {number} r - ряд
+     * @param {number} c - колонка
+     * @returns {boolean}
+     */
+    has(r, c) {
+        return this.obstacles.has(`${r},${c}`);
+    }
+
+    /**
+     * Проверка, блокирует ли клетка
+     * @param {number} r - ряд
+     * @param {number} c - колонка
+     * @returns {boolean}
+     */
+    blocksCell(r, c) {
+        const obstacle = this.obstacles.get(`${r},${c}`);
+        return obstacle ? obstacle.blocksCell() : false;
+    }
+
+    /**
+     * Обработка матча для разрушения препятствий
+     * @param {Set<string>} matchCells - множество координат матча "r,c"
+     * @returns {Array} - список разрушенных препятствий
+     */
+    processMatch(matchCells) {
+        const destroyed = [];
         
-        if (this.type === OBSTACLE_TYPES.ICE) {
-            // Рисуем лёд как слой поверх
-            ctx.fillStyle = config.color;
-            ctx.globalAlpha = config.opacity;
+        matchCells.forEach(key => {
+            const [r, c] = key.split(',').map(Number);
+            const obstacle = this.obstacles.get(key);
             
-            // Форма льда (неровная)
-            ctx.beginPath();
-            ctx.moveTo(x + 5 + shakeX, y + 5 + shakeY);
-            ctx.lineTo(x + size - 5 + shakeX, y + 8 + shakeY);
-            ctx.lineTo(x + size - 3 + shakeX, y + size - 5 + shakeY);
-            ctx.lineTo(x + 8 + shakeX, y + size - 3 + shakeY);
-            ctx.closePath();
-            ctx.fill();
-            
-            // Блик на льду
-            ctx.fillStyle = '#fff';
-            ctx.globalAlpha = 0.4;
-            ctx.beginPath();
-            ctx.ellipse(x + center + shakeX, y + center/2 + shakeY, size * 0.2, size * 0.1, Math.PI / 4, 0, Math.PI * 2);
-            ctx.fill();
-            
-        } else if (this.type === OBSTACLE_TYPES.GRASS) {
-            // Трава внизу клетки
-            ctx.fillStyle = config.color;
-            ctx.globalAlpha = config.opacity;
-            
-            ctx.beginPath();
-            ctx.moveTo(x + 2 + shakeX, y + size - 5 + shakeY);
-            ctx.quadraticCurveTo(x + center + shakeX, y + size - 15 + shakeY, x + size - 2 + shakeX, y + size - 5 + shakeY);
-            ctx.lineTo(x + size - 2 + shakeX, y + size + shakeY);
-            ctx.lineTo(x + 2 + shakeX, y + size + shakeY);
-            ctx.closePath();
-            ctx.fill();
-            
-            // Травинки
-            ctx.strokeStyle = '#2ecc71';
-            ctx.lineWidth = 2;
-            for (let i = 0; i < 5; i++) {
-                const gx = x + 5 + (i * (size - 10) / 4) + shakeX;
-                ctx.beginPath();
-                ctx.moveTo(gx, y + size - 5 + shakeY);
-                ctx.quadraticCurveTo(gx + 2, y + size - 12 + shakeY, gx, y + size - 18 + shakeY);
-                ctx.stroke();
+            if (obstacle) {
+                // Если трава - нужен матч именно на этой клетке
+                if (obstacle.requiresMatchOnTop()) {
+                    if (obstacle.hit(1)) {
+                        destroyed.push({ type: obstacle.type, r, c });
+                        this.obstacles.delete(key);
+                    }
+                }
             }
             
-        } else if (this.type === OBSTACLE_TYPES.BOX) {
-            // Деревянный ящик
-            ctx.translate(x + center + shakeX, y + center + shakeY);
-            
-            ctx.fillStyle = config.color;
-            ctx.fillRect(-size/2 + 4, -size/2 + 4, size - 8, size - 8);
-            
-            // Крестовина на ящике
-            ctx.strokeStyle = '#c23616';
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.moveTo(-size/2 + 4, -size/2 + 4);
-            ctx.lineTo(size/2 - 4, size/2 - 4);
-            ctx.moveTo(size/2 - 4, -size/2 + 4);
-            ctx.lineTo(-size/2 + 4, size/2 - 4);
-            ctx.stroke();
-            
-            // Гвозди
-            ctx.fillStyle = '#7f8c8d';
-            ctx.beginPath();
-            ctx.arc(-size/2 + 8, -size/2 + 8, 3, 0, Math.PI*2);
-            ctx.arc(size/2 - 8, -size/2 + 8, 3, 0, Math.PI*2);
-            ctx.arc(-size/2 + 8, size/2 - 8, 3, 0, Math.PI*2);
-            ctx.arc(size/2 - 8, size/2 - 8, 3, 0, Math.PI*2);
-            ctx.fill();
-            
-            ctx.setTransform(1, 0, 0, 1, 0, 0); // Сброс трансформации
-            
-        } else if (this.type === OBSTACLE_TYPES.CHAIN) {
-            // Замок/Цепи
-            ctx.fillStyle = '#57606f';
-            ctx.globalAlpha = 0.9;
-            
-            // Металлическая пластина
-            ctx.beginPath();
-            ctx.roundRect(x + 8 + shakeX, y + 8 + shakeY, size - 16, size - 16, 5);
-            ctx.fill();
-            
-            // Цепи по углам
-            ctx.strokeStyle = '#a4b0be';
-            ctx.lineWidth = 4;
-            const corners = [
-                {x: x+5, y:y+5}, {x: x+size-5, y:y+5},
-                {x: x+5, y:y+size-5}, {x: x+size-5, y:y+size-5}
+            // Проверка соседей для льда и ящиков
+            const neighbors = [
+                { r: r - 1, c }, { r: r + 1, c },
+                { r, c: c - 1 }, { r, c: c + 1 }
             ];
             
-            corners.forEach(corner => {
-                ctx.beginPath();
-                ctx.arc(corner.x + shakeX, corner.y + shakeY, 6, 0, Math.PI*2);
-                ctx.stroke();
+            neighbors.forEach(n => {
+                const nKey = `${n.r},${n.c}`;
+                const nObstacle = this.obstacles.get(nKey);
+                
+                if (nObstacle && !nObstacle.requiresMatchOnTop()) {
+                    // Лёд и ящики бьются от соседнего матча
+                    const damage = nObstacle.type === OBSTACLE_TYPES.ICE ? 1 : 1;
+                    if (nObstacle.hit(damage)) {
+                        destroyed.push({ type: nObstacle.type, r: n.r, c: n.c });
+                        this.obstacles.delete(nKey);
+                    }
+                }
             });
-            
-            // Замок в центре
-            ctx.fillStyle = '#ffa502';
-            ctx.beginPath();
-            ctx.arc(x + center + shakeX, y + center + shakeY, 8, 0, Math.PI*2);
-            ctx.fill();
-            
-        } else if (this.type === OBSTACLE_TYPES.ROCK) {
-            // Скала
-            ctx.fillStyle = config.color;
-            
-            ctx.beginPath();
-            ctx.moveTo(x + 10 + shakeX, y + 5 + shakeY);
-            ctx.lineTo(x + size - 5 + shakeX, y + 10 + shakeY);
-            ctx.lineTo(x + size - 2 + shakeX, y + size - 5 + shakeY);
-            ctx.lineTo(x + size/2 + shakeX, y + size + shakeY);
-            ctx.lineTo(x + 5 + shakeX, y + size - 8 + shakeY);
-            ctx.closePath();
-            ctx.fill();
-            
-            // Текстура камня
-            ctx.strokeStyle = '#57606f';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(x + 20 + shakeX, y + 20 + shakeY);
-            ctx.lineTo(x + 35 + shakeX, y + 30 + shakeY);
-            ctx.moveTo(x + size - 20 + shakeX, y + 40 + shakeY);
-            ctx.lineTo(x + size - 30 + shakeX, y + 25 + shakeY);
-            ctx.stroke();
-        }
+        });
         
-        // Индикатор здоровья для многоразовых препятствий (если не полный HP)
-        if (this.hp < this.maxHp && this.type !== OBSTACLE_TYPES.ROCK) {
-            const hpPercent = this.hp / this.maxHp;
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.fillRect(x + 5, y + size - 8, size - 10, 4);
-            
-            ctx.fillStyle = hpPercent > 0.5 ? '#2ed573' : (hpPercent > 0.2 ? '#ffa502' : '#ff4757');
-            ctx.fillRect(x + 6, y + size - 7, (size - 12) * hpPercent, 2);
-        }
-        
-        ctx.restore();
+        return destroyed;
+    }
+
+    /**
+     * Получение всех препятствий
+     * @returns {Map}
+     */
+    getAll() {
+        return this.obstacles;
+    }
+
+    /**
+     * Проверка, остались ли препятствия
+     * @returns {boolean}
+     */
+    hasObstacles() {
+        return this.obstacles.size > 0;
     }
 }
 
 /**
- * Создание препятствий для уровня
- * @param {Array} layout - массив конфигурации препятствий из уровня
- * @returns {Map} - карта препятствий "r,c" -> Obstacle
+ * Рендеринг слоя препятствий для DOM
+ * @param {ObstacleManager} manager - менеджер препятствий
+ * @param {number} cellSize - размер клетки
+ * @returns {string} - HTML строка
  */
-export function createObstaclesFromLayout(layout) {
-    const obstacles = new Map();
+export function renderObstaclesLayer(manager, cellSize) {
+    let html = '';
     
-    if (!layout) return obstacles;
-    
-    layout.forEach(item => {
-        const { r, c, type, hp } = item;
-        const key = `${r},${c}`;
-        obstacles.set(key, new Obstacle(type, r, c, hp));
-    });
-    
-    return obstacles;
-}
-
-/**
- * Проверка попадания по препятствию при матче
- * @param {Array} matches - координаты матча
- * @param {Map} obstacles - карта препятствий
- * @returns {Array} - список разрушенных препятствий
- */
-export function checkObstacleHits(matches, obstacles) {
-    const destroyed = [];
-    
-    matches.forEach(match => {
-        const key = `${match.r},${match.c}`;
-        const obstacle = obstacles.get(key);
+    for (const [key, obstacle] of manager.getAll()) {
+        const [r, c] = key.split(',').map(Number);
+        const x = c * cellSize;
+        const y = r * cellSize;
         
-        if (obstacle) {
-            // Если трава - нужен матч именно на этой клетке
-            if (obstacle.requiresMatchOnTop()) {
-                if (obstacle.hit(1)) {
-                    destroyed.push(obstacle);
-                    obstacles.delete(key);
-                }
-            }
+        const shakeX = obstacle.isAnimating ? obstacle.shakeOffset.x : 0;
+        const shakeY = obstacle.isAnimating ? obstacle.shakeOffset.y : 0;
+        
+        let content = '';
+        let style = `position: absolute; left: ${x}px; top: ${y}px; width: ${cellSize}px; height: ${cellSize}px; transform: translate(${shakeX}px, ${shakeY}px); pointer-events: none;`;
+        
+        switch (obstacle.type) {
+            case 'ice':
+                content = `<div style="position: absolute; left: 5px; top: 5px; right: 5px; bottom: 5px; background: ${OBSTACLE_CONFIG.ice.color}; opacity: ${OBSTACLE_CONFIG.ice.opacity}; border-radius: 8px;"></div>`;
+                break;
+            case 'box':
+                content = `<div style="position: absolute; left: 4px; top: 4px; width: ${cellSize - 8}px; height: ${cellSize - 8}px; background: ${OBSTACLE_CONFIG.box.color}; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: ${cellSize * 0.5}px;">📦</div>`;
+                break;
+            case 'grass':
+                content = `<div style="position: absolute; left: 0; bottom: 0; width: 100%; height: 30%; background: ${OBSTACLE_CONFIG.grass.color}; opacity: ${OBSTACLE_CONFIG.grass.opacity}; border-radius: 0 0 8px 8px;"></div>`;
+                break;
+            case 'chain':
+                content = `<div style="position: absolute; left: 8px; top: 8px; right: 8px; bottom: 8px; background: ${OBSTACLE_CONFIG.chain.color}; opacity: ${OBSTACLE_CONFIG.chain.opacity}; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: ${cellSize * 0.4}px;">🔒</div>`;
+                break;
+            case 'rock':
+                content = `<div style="position: absolute; left: 2px; top: 2px; right: 2px; bottom: 2px; background: ${OBSTACLE_CONFIG.rock.color}; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: ${cellSize * 0.5}px;">🪨</div>`;
+                break;
         }
         
-        // Проверка соседей для льда и ящиков
-        const neighbors = [
-            { r: match.r - 1, c: match.c },
-            { r: match.r + 1, c: match.c },
-            { r: match.r, c: match.c - 1 },
-            { r: match.r, c: match.c + 1 }
-        ];
+        // Индикатор здоровья
+        if (obstacle.hp < obstacle.maxHp && obstacle.type !== 'rock') {
+            const hpPercent = obstacle.hp / obstacle.maxHp;
+            content += `<div style="position: absolute; left: 5px; bottom: 3px; right: 5px; height: 4px; background: rgba(0,0,0,0.5); border-radius: 2px;"><div style="width: ${hpPercent * 100}%; height: 100%; background: ${hpPercent > 0.5 ? '#2ed573' : (hpPercent > 0.2 ? '#ffa502' : '#ff4757')}; border-radius: 2px;"></div></div>`;
+        }
         
-        neighbors.forEach(n => {
-            const nKey = `${n.r},${n.c}`;
-            const nObstacle = obstacles.get(nKey);
-            
-            if (nObstacle && !nObstacle.requiresMatchOnTop()) {
-                // Лёд и ящики бьются от соседнего матча
-                const damage = nObstacle.type === OBSTACLE_TYPES.ICE ? 1 : 1;
-                if (nObstacle.hit(damage)) {
-                    destroyed.push(nObstacle);
-                    obstacles.delete(nKey);
-                }
-            }
-        });
-    });
+        html += `<div class="obstacle obstacle-${obstacle.type}" style="${style}">${content}</div>`;
+    }
     
-    return destroyed;
+    return html;
 }
