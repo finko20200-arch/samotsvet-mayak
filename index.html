@@ -414,6 +414,7 @@ import { storage } from './src/core/storage.js';
 import { audioManager } from './src/audio/sound.js';
 import { Match3Engine } from './src/game/match3.js';
 import { fmt, $, initTelegram, getKlavSVG, isTelegram, delay } from './utils/helpers.js';
+import { confetti, klavReact, showToast as showEffectToast, frameShake, comboBanner, popup, particlesAt } from './src/effects/particles.js';
 
 let engine = null, currentLevel = null, pendingLevelNum = 1;
 
@@ -531,7 +532,9 @@ function renderHUD() {
 function updateProgress() { const s = engine.getState().score; $('gfill').style.width = Math.min(100, s/currentLevel.target*100)+'%'; $('glabel').textContent = `${fmt(s)} / ${fmt(currentLevel.target)}`; }
 
 async function winLevel(res) {
-  engine.busy = true; audioManager.playSFX('win'); confetti(); klavReact('win');
+  engine.busy = true; audioManager.playSFX('win'); 
+  confetti($('fx'), $('board').clientWidth, $('board').clientHeight); 
+  klavReact('win', $('klavGame'));
   const n = currentLevel.n, stars = res.moves >= 6 ? 3 : res.moves >= 2 ? 2 : 1;
   if (stars > (storage.getData().stars[n]||0)) storage.getData().stars[n] = stars;
   if (!storage.getData().best[n] || res.score > storage.getData().best[n]) storage.getData().best[n] = res.score;
@@ -547,13 +550,14 @@ async function winLevel(res) {
 }
 
 async function loseLevel(res) {
-  engine.busy = true; audioManager.playSFX('lose'); klavReact('sad');
+  engine.busy = true; audioManager.playSFX('lose'); 
+  klavReact('sad', $('klavGame'));
   $('boardFrame').classList.add('dim'); setTimeout(()=>$('boardFrame').classList.remove('dim'),1000);
   storage.spendLife(); $('foScore').textContent = fmt(res.score); $('foTarget').textContent = fmt(res.target);
   $('foRetry').classList.toggle('dis', storage.getData().lives <= 0); await delay(650); showOverlay($('failOv'));
 }
 
-function grantMoves(c) { hideAllOverlays(); engine.moves += c; engine.onStateChange?.('moves', engine.moves); showToast('+'+c+' ходов! 💪'); klavReact('happy'); engine.resetIdle(); }
+function grantMoves(c) { hideAllOverlays(); engine.moves += c; engine.onStateChange?.('moves', engine.moves); showToast('+'+c+' ходов! 💪'); klavReact('happy', $('klavGame')); engine.resetIdle(); }
 function retryLevel() { hideOverlay($('failOv')); engine.score = 0; engine.moves = currentLevel.moves; $('klavGame').className = 'klav idle'; engine.busy = true; engine.initBoard(currentLevel); renderHUD(); }
 
 function showCard(ch) {
@@ -600,10 +604,10 @@ function showOverlay(o){o.classList.remove('hidden');const c=o.querySelector('.c
 function hideOverlay(o){o.classList.add('hidden');}
 function hideAllOverlays(){document.querySelectorAll('.overlay').forEach(o=>o.classList.add('hidden'));}
 let toastT;
-function showToast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),CONFIG.ANIM.TOAST);}
+function showToast(m){showEffectToast(m,$('toast'),CONFIG.ANIM.TOAST);}
 
-function confetti(){for(let i=0;i<38;i++){const p=document.createElement('i');p.className='particle';p.style.background=CONFIG.GEM_COLORS[Math.floor(Math.random()*6)];p.style.left=Math.random()*$('board').clientWidth+'px';p.style.top='-12px';$('fx').appendChild(p);const dx=(Math.random()-.5)*140,dy=$('board').clientHeight*(.55+Math.random()*.55);p.animate([{transform:'translate(0,0) rotate(0)',opacity:1},{transform:`translate(${dx}px,${dy}px) rotate(${Math.random()*720}deg)`,opacity:0}],{duration:950+Math.random()*650,easing:'cubic-bezier(.2,.6,.4,1)'}).onfinish=()=>p.remove();}}
-function klavReact(m){const k=$('klavGame');k.className='klav '+m;clearTimeout(k._t);if(m!=='sad')k._t=setTimeout(()=>k.className='klav idle',1500);}
+// Эти функции теперь импортируются из particles.js, но оставляем алиасы для совместимости
+// confetti и klavReact теперь приходят из модуля эффектов
 
 function buyWithStars(price,onPaid){showToast('⏳ Invoice '+price+' ⭐');setTimeout(onPaid,800);}
 function shareResult(){const text=`Я зажёг этаж ${currentLevel.n}! ${fmt(engine.getState().score)} очков.`;const url='https://t.me/SamotsvetBoomBot/app';const tg=window.Telegram?.WebApp;if(tg?.openTelegramURL){tg.openTelegramURL('https://t.me/share/url?url='+encodeURIComponent(url)+'&text='+encodeURIComponent(text));}else if(navigator.share){navigator.share({text,url}).catch(()=>{});}else{try{navigator.clipboard.writeText(text+' '+url);}catch(e){}showToast('Ссылка скопирована!');}}
