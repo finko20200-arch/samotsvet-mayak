@@ -8,6 +8,8 @@ import { rand, createGemSVG, createRainbowSVG, haptic } from '../../utils/helper
 import { storage } from '../core/storage.js';
 import { audioManager } from '../audio/sound.js';
 import { particlesAt, popup, comboBanner, frameShake, klavReact, confetti } from '../effects/particles.js';
+import { activateSpecialGem, combineSpecialGems } from './specialGems.js';
+import { ObstacleManager, renderObstaclesLayer } from './obstacles.js';
 
 /**
  * Класс камня
@@ -15,11 +17,12 @@ import { particlesAt, popup, comboBanner, frameShake, klavReact, confetti } from
 export class Gem {
   constructor(type, row, col, element) {
     this.type = type;
-    this.special = null; // 'bomb' | 'rainbow' | null
+    this.special = null; // 'h-bomb' | 'v-bomb' | 'bomb' | 'rainbow' | null
     this.row = row;
     this.col = col;
     this.element = element;
     this.isBoom = false; // временный флаг для взрыва бомбы
+    this.comboType = null; // для комбо спец-камней: 'cross', 'mega-line', etc.
   }
 }
 
@@ -43,6 +46,9 @@ export class Match3Engine {
     this.selectedGem = null;
     this.pointerStart = null;
     this.idleTimer = null;
+    
+    // Менеджер препятствий
+    this.obstacleManager = new ObstacleManager();
     
     this.setupResizeObserver();
   }
@@ -98,8 +104,21 @@ export class Match3Engine {
    */
   updateGemAppearance(gem) {
     gem.element.className = `gem t${Math.max(0, gem.type)}${gem.special ? ' ' + gem.special : ''}`;
+    if (gem.comboType) {
+      gem.element.classList.add(gem.comboType);
+    }
     gem.element.querySelector('.gem-inner').innerHTML = 
       gem.special === 'rainbow' ? createRainbowSVG() : createGemSVG(gem.type);
+    
+    // Добавляем индикатор для комбо-спец-камней
+    const inner = gem.element.querySelector('.gem-inner');
+    if (gem.comboType === 'cross') {
+      inner.innerHTML += '<div class="special-icon cross">✚</div>';
+    } else if (gem.comboType === 'mega-line') {
+      inner.innerHTML += '<div class="special-icon mega">★</div>';
+    } else if (gem.comboType === 'mega-bomb') {
+      inner.innerHTML += '<div class="special-icon mega-bomb">☢</div>';
+    }
   }
 
   /**
@@ -112,6 +131,14 @@ export class Match3Engine {
     this.moves = levelConfig.moves;
     this.target = levelConfig.target;
     this.score = 0;
+    
+    // Инициализация препятствий если есть
+    if (levelConfig.obstacles) {
+      this.obstacleManager.loadLevel(levelConfig.obstacles, CONFIG.ROWS, CONFIG.COLS);
+    } else {
+      this.obstacleManager.clear();
+    }
+    
     this.layout();
 
     // Заполнение без начальных матчей
@@ -136,6 +163,19 @@ export class Match3Engine {
     }
 
     this.entranceAnimation();
+    
+    // Рендеринг слоя препятствий
+    this.renderObstacles();
+  }
+
+  /**
+   * Рендеринг препятствий
+   */
+  renderObstacles() {
+    const obstaclesLayer = document.getElementById('obstaclesLayer');
+    if (obstaclesLayer) {
+      obstaclesLayer.innerHTML = renderObstaclesLayer(this.obstacleManager, this.cellSize);
+    }
   }
 
   /**
@@ -239,7 +279,8 @@ export class Match3Engine {
           if (len >= 5) {
             spawns.push({ r, c: c + Math.floor(len / 2), kind: 'rainbow' });
           } else if (len === 4) {
-            spawns.push({ r, c: c + 1, kind: 'bomb' });
+            // Определение типа бомбы по направлению
+            spawns.push({ r, c: c + 1, kind: 'h-bomb' });
           }
         }
         c += len;
@@ -266,7 +307,8 @@ export class Match3Engine {
           if (len >= 5) {
             spawns.push({ r: r + Math.floor(len / 2), c, kind: 'rainbow' });
           } else if (len === 4) {
-            spawns.push({ r: r + 1, c, kind: 'bomb' });
+            // Определение типа бомбы по направлению
+            spawns.push({ r: r + 1, c, kind: 'v-bomb' });
           }
         }
         r += len;
@@ -277,28 +319,57 @@ export class Match3Engine {
   }
 
   /**
-   * Расширение очистки с учётом бомб
+   * Расширение очистки с учётом бомб и спец-камней
    */
   expandClears(baseSet) {
     const result = new Set(baseSet);
     const stack = [...baseSet];
+    const specialActivations = [];
 
     while (stack.length) {
       const key = stack.pop();
       const [r, c] = key.split(',').map(Number);
       const gem = this.grid[r]?.[c];
       
-      if (gem?.special === 'bomb' && !gem.isBoom) {
+      if (!gem) continue;
+      
+      // Активация спец-камней
+      if (gem.special && !gem.isBoom) {
+        specialActivations.push({ gem, row: r, col: c });
         gem.isBoom = true;
-        for (let dr = -1; dr <= 1; dr++) {
-          for (let dc = -1; dc <= 1; dc++) {
-            const rr = r + dr, cc = c + dc;
-            if (rr < 0 || rr >= CONFIG.ROWS || cc < 0 || cc >= CONFIG.COLS) continue;
-            const neighborKey = `${rr},${cc}`;
-            if (this.grid[rr][cc] && !result.has(neighborKey)) {
-              result.add(neighborKey);
-              stack.push(neighborKey);
-            }
+        
+        // Добавляем эффекты в зависимости от типа
+        const effects = activateSpecialGem(gem.special, r, c, CONFIG.ROWS, CONFIG.COLS);
+        effects.forEach(effectKey => {
+          if (!result.has(effectKey)) {
+            result.add(effectKey);
+            stack.push(effectKey);
+          }
+        });
+      }
+    }
+
+    // Обработка комбо спец-камней
+    if (specialActivations.length >= 2) {
+      // Проверяем соседние спец-камни для комбо
+      for (let i = 0; i < specialActivations.length - 1; i++) {
+        for (let j = i + 1; j < specialActivations.length; j++) {
+          const a = specialActivations[i];
+          const b = specialActivations[j];
+          const dist = Math.abs(a.row - b.row) + Math.abs(a.col - b.col);
+          
+          if (dist <= 1) {
+            // Комбо двух спец-камней
+            const comboEffects = combineSpecialGems(
+              a.gem.special, a.row, a.col,
+              b.gem.special, b.row, b.col,
+              CONFIG.ROWS, CONFIG.COLS
+            );
+            comboEffects.forEach(effectKey => {
+              if (!result.has(effectKey)) {
+                result.add(effectKey);
+              }
+            });
           }
         }
       }
@@ -603,8 +674,15 @@ export class Match3Engine {
         
         const special = spawnMap.get(key);
         if (special && raw.has(key)) {
-          gem.special = special;
-          if (special === 'rainbow') gem.type = -1;
+          // Проверка на комбо спец-камней (если уже есть специальный камень)
+          if (gem.special && gem.special !== special) {
+            // Комбо двух спец-камней - создаём улучшенный
+            gem.comboType = this.getComboType(gem.special, special);
+            gem.special = 'bomb'; // Базовый тип для комбо
+          } else {
+            gem.special = special;
+            if (special === 'rainbow') gem.type = -1;
+          }
           this.updateGemAppearance(gem);
           gem.element.classList.add('spawned');
           setTimeout(() => gem.element.classList.remove('spawned'), CONFIG.ANIM.SPAWN);
@@ -618,6 +696,7 @@ export class Match3Engine {
 
       this.onStateChange?.('score', this.score);
 
+      // Эффекты для комбо спец-камней
       if (combo >= 2) {
         comboBanner(combo, this.boardEl);
         klavReact('happy', document.getElementById('klavGame'));
@@ -628,8 +707,68 @@ export class Match3Engine {
 
       await this.delay(CONFIG.ANIM.POP);
       elements.forEach(el => el.remove());
+      
+      // Обновление препятствий после каждого каскада
+      this.updateObstacles();
+      
       await this.dropAndRefill();
       this.onStateChange?.('score', this.score);
+    }
+  }
+
+  /**
+   * Определение типа комбо спец-камней
+   */
+  getComboType(type1, type2) {
+    const types = [type1, type2].sort();
+    
+    // Линейная + Линейная = КРЕСТ
+    if ((types[0] === 'h-bomb' && types[1] === 'v-bomb') ||
+        (types[0] === 'h-bomb' && types[1] === 'h-bomb') ||
+        (types[0] === 'v-bomb' && types[1] === 'v-bomb')) {
+      return 'cross';
+    }
+    
+    // Бомба + Линейная = МЕГА-ЛИНИЯ
+    if ((types[0] === 'bomb' && types[1] === 'h-bomb') ||
+        (types[0] === 'bomb' && types[1] === 'v-bomb')) {
+      return 'mega-line';
+    }
+    
+    // Бомба + Бомба = МЕГА-ВЗРЫВ
+    if (types[0] === 'bomb' && types[1] === 'bomb') {
+      return 'mega-bomb';
+    }
+    
+    // Радужный + любой = цветовой взрыв (обрабатывается отдельно)
+    if (types.includes('rainbow')) {
+      return null;
+    }
+    
+    return 'cross'; // по умолчанию
+  }
+
+  /**
+   * Обновление состояния препятствий
+   */
+  updateObstacles() {
+    // Проверка разрушения препятствий
+    let changed = false;
+    for (let r = 0; r < CONFIG.ROWS; r++) {
+      for (let c = 0; c < CONFIG.COLS; c++) {
+        const obstacle = this.obstacleManager.get(r, c);
+        if (obstacle && obstacle.hp <= 0) {
+          this.obstacleManager.remove(r, c);
+          changed = true;
+          audioManager.playSFX('break');
+          haptic('medium');
+          particlesAt(r, c, 7, this.fxEl, this.cellSize); // серые частицы
+        }
+      }
+    }
+    
+    if (changed) {
+      this.renderObstacles();
     }
   }
 
