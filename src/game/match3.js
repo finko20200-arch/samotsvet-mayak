@@ -7,6 +7,7 @@ import { CONFIG, LEVELS } from '../../config/gameConfig.js';
 import { rand, createGemSVG, createRainbowSVG, haptic } from '../../utils/helpers.js';
 import { storage } from '../core/storage.js';
 import { audioManager } from '../audio/sound.js';
+import { particlesAt, popup, comboBanner, frameShake, klavReact, confetti } from '../effects/particles.js';
 
 /**
  * Класс камня
@@ -557,13 +558,13 @@ export class Match3Engine {
       
       this.grid[r][c] = null;
       elements.push(gem.element);
-      // particlesAt(r, c, Math.max(0, gem.type)); // TODO: вынести в effects
+      particlesAt(r, c, Math.max(0, gem.type), this.fxEl, this.cellSize);
+      popup(`+${points / cells.size}`, r, c, combo, this.fxEl, this.cellSize);
       gem.element.classList.add('pop');
       sumRow += r;
       sumCol += c;
     });
 
-    // popup(`+${points}`, sumRow / cells.size, sumCol / cells.size, combo); // TODO: вынести в UI
     this.onStateChange?.('score', this.score);
 
     await this.delay(CONFIG.ANIM.POP);
@@ -610,7 +611,7 @@ export class Match3Engine {
         } else {
           this.grid[r][c] = null;
           elements.push(gem.element);
-          // particlesAt(r, c, Math.max(0, gem.type)); // TODO
+          particlesAt(r, c, Math.max(0, gem.type), this.fxEl, this.cellSize);
           gem.element.classList.add('pop');
         }
       });
@@ -618,11 +619,11 @@ export class Match3Engine {
       this.onStateChange?.('score', this.score);
 
       if (combo >= 2) {
-        // comboBanner(combo); // TODO
-        // klavReact('happy'); // TODO
+        comboBanner(combo, this.boardEl);
+        klavReact('happy', document.getElementById('klavGame'));
       }
       if (combo >= 3) {
-        // frameShake(); // TODO
+        frameShake(document.getElementById('boardFrame'));
       }
 
       await this.delay(CONFIG.ANIM.POP);
