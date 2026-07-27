@@ -30,9 +30,10 @@ export class Gem {
  * Движок игры Match-3
  */
 export class Match3Engine {
-  constructor(boardElement, fxElement, onStateChange) {
+  constructor(boardElement, fxElement, obstacleLayerElement, onStateChange) {
     this.boardEl = boardElement;
     this.fxEl = fxElement;
+    this.obstacleLayerEl = obstacleLayerElement;
     this.onStateChange = onStateChange; // callback при изменении состояния
     
     this.grid = []; // двумерный массив [row][col]
@@ -87,6 +88,7 @@ export class Match3Engine {
   createGemElement(type, row, col) {
     const el = document.createElement('div');
     el.className = `gem t${type}`;
+    el.dataset.type = type; // для CSS селекторов
     el.innerHTML = `<div class="gem-inner">${createGemSVG(type)}</div>`;
     el.style.setProperty('--d', (((row + col) % 6) * 0.35) + 's');
     el.style.transform = `translate(${col * this.cellSize}px, ${row * this.cellSize}px)`;
@@ -103,22 +105,21 @@ export class Match3Engine {
    * Обновление внешнего вида камня
    */
   updateGemAppearance(gem) {
-    gem.element.className = `gem t${Math.max(0, gem.type)}${gem.special ? ' ' + gem.special : ''}`;
-    if (gem.comboType) {
-      gem.element.classList.add(gem.comboType);
+    let className = `gem t${Math.max(0, gem.type)}`;
+    if (gem.special) {
+      className += ` ${gem.special}`;
+      gem.element.dataset.type = gem.special;
+    } else {
+      gem.element.dataset.type = gem.type;
     }
+    
+    if (gem.comboType) {
+      className += ` ${gem.comboType}`;
+    }
+    
+    gem.element.className = className;
     gem.element.querySelector('.gem-inner').innerHTML = 
       gem.special === 'rainbow' ? createRainbowSVG() : createGemSVG(gem.type);
-    
-    // Добавляем индикатор для комбо-спец-камней
-    const inner = gem.element.querySelector('.gem-inner');
-    if (gem.comboType === 'cross') {
-      inner.innerHTML += '<div class="special-icon cross">✚</div>';
-    } else if (gem.comboType === 'mega-line') {
-      inner.innerHTML += '<div class="special-icon mega">★</div>';
-    } else if (gem.comboType === 'mega-bomb') {
-      inner.innerHTML += '<div class="special-icon mega-bomb">☢</div>';
-    }
   }
 
   /**
@@ -172,9 +173,8 @@ export class Match3Engine {
    * Рендеринг препятствий
    */
   renderObstacles() {
-    const obstaclesLayer = document.getElementById('obstaclesLayer');
-    if (obstaclesLayer) {
-      obstaclesLayer.innerHTML = renderObstaclesLayer(this.obstacleManager, this.cellSize);
+    if (this.obstacleLayerEl) {
+      this.obstacleLayerEl.innerHTML = renderObstaclesLayer(this.obstacleManager, this.cellSize);
     }
   }
 
