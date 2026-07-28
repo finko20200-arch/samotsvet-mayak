@@ -10,6 +10,7 @@ import { audioManager } from '../audio/sound.js';
 import { particlesAt, popup, comboBanner, frameShake, klavReact, confetti } from '../effects/particles.js';
 import { activateSpecialGem, combineSpecialGems } from './specialGems.js';
 import { ObstacleManager, renderObstaclesLayer } from './obstacles.js';
+import { updatePlayerStat } from '../core/achievements.js';
 
 /**
  * Класс камня
@@ -454,9 +455,13 @@ export class Match3Engine {
     
     this.pointerStart = { x: e.clientX, y: e.clientY, gem };
     
-    window.addEventListener('pointermove', (ev) => this.handlePointerMove(ev));
-    window.addEventListener('pointerup', () => this.handlePointerUp(), { once: true });
-    window.addEventListener('pointercancel', () => this.cleanupPointer(), { once: true });
+    this._boundPointerMove = (ev) => this.handlePointerMove(ev);
+    this._boundPointerUp = () => this.handlePointerUp();
+    this._boundPointerCancel = () => this.cleanupPointer();
+    
+    window.addEventListener('pointermove', this._boundPointerMove);
+    window.addEventListener('pointerup', this._boundPointerUp, { once: true });
+    window.addEventListener('pointercancel', this._boundPointerCancel, { once: true });
   }
 
   /**
@@ -517,7 +522,18 @@ export class Match3Engine {
    * Очистка обработчиков
    */
   cleanupPointer() {
-    window.removeEventListener('pointermove', (e) => this.handlePointerMove(e));
+    if (this._boundPointerMove) {
+      window.removeEventListener('pointermove', this._boundPointerMove);
+      this._boundPointerMove = null;
+    }
+    if (this._boundPointerUp) {
+      window.removeEventListener('pointerup', this._boundPointerUp);
+      this._boundPointerUp = null;
+    }
+    if (this._boundPointerCancel) {
+      window.removeEventListener('pointercancel', this._boundPointerCancel);
+      this._boundPointerCancel = null;
+    }
   }
 
   /**
@@ -604,6 +620,7 @@ export class Match3Engine {
 
     this.moves--;
     this.onStateChange?.('moves', this.moves);
+    updatePlayerStat('totalMoves', 1);
     
     await this.resolveBoard();
     this.busy = false;
@@ -660,6 +677,8 @@ export class Match3Engine {
       this.score += points;
       audioManager.playSFX('match', combo);
       haptic(combo > 1 ? 'medium' : 'light');
+      updatePlayerStat('totalMatches', cells.size);
+      if (combo > 1) updatePlayerStat('maxCombo', combo);
 
       let sumRow = 0, sumCol = 0;
       const elements = [];

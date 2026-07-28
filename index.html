@@ -337,7 +337,7 @@ button{font-family:inherit}
   </header>
   <main class="board-zone">
     <div id="boardFrame"><div class="board-box">
-      <div id="board"></div><div id="fx"></div>
+      <div id="board"></div><div id="fx"></div><div id="obstaclesLayer"></div>
       <div class="klav idle" id="klavGame"></div>
     </div></div>
   </main>
@@ -415,6 +415,7 @@ import { audioManager } from './src/audio/sound.js';
 import { Match3Engine } from './src/game/match3.js';
 import { fmt, $, initTelegram, getKlavSVG, isTelegram, delay } from './utils/helpers.js';
 import { confetti, klavReact, showToast as showEffectToast, frameShake, comboBanner, popup, particlesAt } from './src/effects/particles.js';
+import { checkAchievements, checkDailyReward, claimDailyReward, updatePlayerStat } from './src/core/achievements.js';
 
 let engine = null, currentLevel = null, pendingLevelNum = 1;
 
@@ -423,6 +424,15 @@ function init() {
   setTimeout(() => document.querySelector('.lvl.current')?.scrollIntoView({ block: 'center' }), 400);
   if (!localStorage.getItem('lh_seen')) { localStorage.setItem('lh_seen', '1'); setTimeout(() => showToast('Свайпай самоцветы — собирай 3 в ряд! 🔦'), 900); }
   document.addEventListener('pointerdown', () => { const ctx = audioManager.getContext(); if (ctx && ctx.state === 'suspended') ctx.resume(); }, { passive: true });
+  
+  // Ежедневные награды при загрузке
+  const daily = checkDailyReward();
+  if (daily) {
+    setTimeout(() => {
+      showToast(`📅 День ${daily.day} — ${daily.icon} получено!`);
+      claimDailyReward();
+    }, 1500);
+  }
 }
 
 function buildMap() {
@@ -540,6 +550,14 @@ async function winLevel(res) {
   if (!storage.getData().best[n] || res.score > storage.getData().best[n]) storage.getData().best[n] = res.score;
   if (n === storage.getData().unlocked && n < 30) storage.getData().unlocked = n+1;
   storage.getData().total += res.score; if (n === 30) storage.getData().finale = true; storage.save();
+  
+  // Статистика и достижения
+  updatePlayerStat('maxScore', res.score);
+  if (stars >= 3 && res.moves >= currentLevel.moves - 10) {
+    updatePlayerStat('perfectLevels', 1);
+  }
+  checkAchievements();
+  
   await delay(700);
   $('woTitle').textContent = n === 30 ? 'МАЯК ЗАЖЖЁН!' : 'УРОВЕНЬ ПРОЙДЕН!'; $('woScore').textContent = fmt(res.score);
   $('woNote').textContent = n%10===0 ? `🔥 Этаж ${n/10} загорелся!` : (n===29?'Осталось одно письмо…':'Отличная работа!');
